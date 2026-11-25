@@ -46,25 +46,27 @@ interface ResourceRecord {
 export const RESOURCE_SCHEME = 'dsh-resource'
 
 /**
- * The protocol key of one address: the host of a `dsh-resource://` URL, as the
- * URL parser reads it (lower-cased). Any other string — another scheme, or one
- * the URL parser rejects — names no protocol and is treated like an address
- * whose protocol has no provider.
+ * The protocol key of one address: the host of a `dsh-resource://` URL, lower-cased.
+ *
+ * Parsed from the string, not through the WHATWG URL API: some engines (ArkWeb)
+ * leave a non-special scheme's authority unparsed, reporting an empty hostname
+ * and folding it into the pathname, which would strand every resource address
+ * as provider-less. String parsing keeps the same observable contract for the
+ * scheme and host parts.
  * @param address - the full address.
  * @returns the protocol key, or `undefined` when the address is not a resource address.
  */
 export function protocolOf(address: string): string | undefined {
-  let parsed: URL
-  try {
-    parsed = new URL(address)
-  } catch {
-    // The URL parser rejects strings without a scheme (`/a/b.txt`, `''`);
-    // nothing else throws here, and an unparseable address is simply not ours.
-    return undefined
-  }
-  if (parsed.protocol !== `${RESOURCE_SCHEME}:`) return undefined
-  // A non-special scheme's host is opaque to the URL parser and keeps its case.
-  return parsed.hostname === '' ? undefined : parsed.hostname.toLowerCase()
+  const schemeMatch = /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(address)
+  if (schemeMatch === null || schemeMatch[1] === undefined) return undefined
+  if (schemeMatch[1].toLowerCase() !== RESOURCE_SCHEME) return undefined
+  const rest = address.slice(schemeMatch[0].length)
+  if (!rest.startsWith('//')) return undefined
+  const after = rest.slice(2)
+  const hostEnd = after.search(/[/?#]/)
+  const host = hostEnd === -1 ? after : after.slice(0, hostEnd)
+  if (host === '') return undefined
+  return host.toLowerCase()
 }
 
 function idle(status: 'none' | 'loading'): ResourceSnapshot<unknown> {
