@@ -18,6 +18,7 @@ import { TerminalGuide, type TerminalGuideInjected } from '../src/client/Termina
 import { LazyTerminalBody } from '../src/client/LazyTerminalBody.tsx'
 import { TerminalTitle } from '../src/client/TerminalTitle.tsx'
 import { AgentTerminalOpener, type AgentTerminalOpenerInjected } from '../src/client/AgentTerminalOpener.tsx'
+import { TerminalRecovery, type TerminalRecoveryInjected } from '../src/client/TerminalRecovery.tsx'
 import type { TerminalBodyInjected } from '../src/client/face.ts'
 import { en, ja, zh, es, fr, de, ru, pt } from '../src/client/locales.ts'
 
@@ -103,7 +104,7 @@ async function mountPlugin() {
   }
 }
 
-it('registers terminal views and the agent terminal opener without recovery or cleanup slots, then releases contributions on unload', async () => {
+it('registers terminal views, the agent terminal opener, and session terminal recovery without the cleanup slot, then releases contributions on unload', async () => {
   expect(hostApply).not.toThrow()
   const h = await mountPlugin()
   try {
@@ -121,6 +122,7 @@ it('registers terminal views and the agent terminal opener without recovery or c
       ['sidebar.right.pane.tab', LazyTerminalBody, 'sidebarTerminal'],
       ['sidebar.right.pane.tab.title', TerminalTitle, 'sidebarTerminal'],
       ['conversation.session.header.actions', AgentTerminalOpener, 'sidebarTerminal'],
+      ['conversation.session.header.actions', TerminalRecovery, 'sidebarTerminal'],
     ])
     const sessionId = 'session' as SessionId
     const launcher = h.entries[0]!.inject(sessionId) as TerminalGuideInjected
@@ -165,6 +167,28 @@ it('registers terminal views and the agent terminal opener without recovery or c
   expect(h.tabs.get('terminal')).toBeUndefined()
   expect(h.entries).toEqual([])
   expect(h.dictionaries.size).toBe(0)
+})
+
+it('restores retained terminals through the recovery entry once per Session', async () => {
+  const h = await mountPlugin()
+  try {
+    const sessionId = 'session' as SessionId
+    const recovery = h.entries.find(entry => entry.component === TerminalRecovery)!.inject(sessionId) as TerminalRecoveryInjected
+    h.terminals.recover.mockResolvedValue([
+      { id: 'retained' as WebTerminalId, title: 'zsh', shell: { path: '/bin/zsh', name: 'zsh', args: ['-i'] }, cwd: '/workspace', cols: 80, rows: 24, state: 'running', exitCode: null, origin: 'user', control: 'user' },
+      { id: 'second' as WebTerminalId, title: 'zsh', shell: { path: '/bin/zsh', name: 'zsh', args: ['-i'] }, cwd: '/workspace', cols: 80, rows: 24, state: 'running', exitCode: null, origin: 'user', control: 'user' },
+    ])
+    await recovery.restore()
+    expect(h.terminals.recover).toHaveBeenCalledExactlyOnceWith(sessionId)
+    expect(h.openTabIn).toHaveBeenCalledTimes(2)
+    expect(h.openTabIn).toHaveBeenNthCalledWith(1, sessionId, 'terminal', { params: { terminalId: 'retained' } })
+    expect(h.openTabIn).toHaveBeenNthCalledWith(2, sessionId, 'terminal', { params: { terminalId: 'second' } })
+    await recovery.restore()
+    expect(h.terminals.recover).toHaveBeenCalledOnce()
+    expect(h.openTabIn).toHaveBeenCalledTimes(2)
+  } finally {
+    await h.dispose()
+  }
 })
 
 it('opens a terminal for the command target and refuses without a selected Session', async () => {
